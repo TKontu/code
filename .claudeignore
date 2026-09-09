@@ -32,3 +32,12 @@ htmlcov/
 *.log
 *.sqlite3
 data/
+
+# Claude Code session state
+.rounds/
+HANDOFF.md
+
+# Other ecosystems
+node_modules/
+target/
+vendor/

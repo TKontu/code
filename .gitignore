@@ -54,3 +54,14 @@ logs/
 # OS
 .DS_Store
 Thumbs.db
+
+# Claude Code session state
+.rounds/
+HANDOFF.md
+.claude/settings.local.json
+
+# Claude Code local state
+.claude/scheduled_tasks.lock
+
+# Local dev environment (not part of the kit)
+dev-compose.yaml
