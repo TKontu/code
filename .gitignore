@@ -65,3 +65,9 @@ HANDOFF.md
 
 # Local dev environment (not part of the kit)
 dev-compose.yaml
+authorized_keys
+docker-compose.prod.yml
+nas-socket-proxy.yaml
+agent-sandbox-setup.sh
+models-cleanup.sh
+devbox-stack.yml
