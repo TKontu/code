@@ -36,6 +36,9 @@ most keys are `n/a` — that is the correct value, and commands will skip those 
 │   └── profiles/      stack-specific add-ons (python-fastapi, node-typescript, go)
 └── settings.json      stack-neutral permissions; profiles carry the rest
 starters/python/       drop-in pyproject.toml + .env.example for a new Python project
+starters/devbox/       Dockerfile for an SSH-reachable remote dev container
+ci/runner/             compose file for a self-hosted GitHub Actions runner
+.github/workflows/     CI for this repo (builds starters/devbox on the LAN runner)
 cheatsheets/           git, docker, pytest, venv, tmux
 CLAUDE_CODE_GUIDE.md   working practices for Claude Code itself
 ```
