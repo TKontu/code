@@ -1,9 +1,11 @@
 # Self-hosted GitHub Actions runner, for jobs that must reach services on
 # your LAN (e.g. pushing to a private registry). Run it on a host with Docker.
 #
-#   cp .env.example .env    # fill it in, then: chmod 600 .env
-#   docker compose up -d
-#   docker compose logs -f  # wait for "Listening for Jobs"
+#   docker compose: cp .env.example .env, fill it in, chmod 600 .env, then
+#                   docker compose up -d && docker compose logs -f
+#   Portainer:      paste this as a stack and set REPO_URL and ACCESS_TOKEN
+#                   under "Environment variables".
+# Wait for "Listening for Jobs" in the logs.
 #
 # Read README.md first: a runner with the Docker socket is root on its host.
 
@@ -14,21 +16,24 @@ services:
     image: myoung34/github-runner:latest
     container_name: github-runner
     restart: unless-stopped
-    env_file: .env
     environment:
+      REPO_URL: ${REPO_URL:?set REPO_URL to https://github.com/<owner>/<repo>}
+      ACCESS_TOKEN: ${ACCESS_TOKEN:?set ACCESS_TOKEN to a GitHub token}
+      RUNNER_NAME: ${RUNNER_NAME:-lan-runner}
+      # Workflows select this runner with: runs-on: [self-hosted, docker-builder]
+      LABELS: ${LABELS:-docker-builder}
       RUNNER_SCOPE: repo
       # Jobs run in this path on the HOST too (see the bind mount below), so
       # bind mounts that jobs pass to the host's Docker daemon resolve.
       RUNNER_WORKDIR: /tmp/github-runner/work
-      # Keeps the registration across container restarts and upgrades.
-      CONFIGURED_ACTIONS_RUNNER_FILES_DIR: /runner/data
-      DISABLE_AUTO_UPDATE: "true"
+      # Registration: with ACCESS_TOKEN the image registers on every start
+      # (--replace, so it takes over its old entry) and deregisters on stop.
+      # Do not set CONFIGURED_ACTIONS_RUNNER_FILES_DIR (registration reuse)
+      # without DISABLE_AUTOMATIC_DEREGISTRATION=true - the image then exits 1
+      # on every start. Auto-update stays on, so the runner never falls below
+      # GitHub's minimum version.
     volumes:
       # Jobs build and push images through the host's Docker daemon, which
       # also keeps its layer cache between runs.
       - /var/run/docker.sock:/var/run/docker.sock
       - /tmp/github-runner:/tmp/github-runner
-      - runner-data:/runner/data
-
-volumes:
-  runner-data:
