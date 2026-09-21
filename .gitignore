@@ -71,3 +71,4 @@ nas-socket-proxy.yaml
 agent-sandbox-setup.sh
 models-cleanup.sh
 devbox-stack.yml
+*.bak-*
