@@ -27,10 +27,13 @@ On the runner host:
    ```json
    { "insecure-registries": ["<registry-host>:<port>"] }
    ```
-2. Copy `compose.yaml` and `.env.example` into a directory, `cp .env.example .env`, fill in
-   `REPO_URL` and `ACCESS_TOKEN`, then `chmod 600 .env`.
-3. `docker compose up -d`, then `docker compose logs -f` until it prints *Listening for Jobs*.
-   The runner appears under **Settings → Actions → Runners** as idle.
+2. Provide `REPO_URL` and `ACCESS_TOKEN` (see `.env.example`):
+   - **docker compose** — copy `compose.yaml` and `.env.example` into a directory,
+     `cp .env.example .env`, fill it in, `chmod 600 .env`, then `docker compose up -d`.
+   - **Portainer** — paste `compose.yaml` as a stack and set the two variables under
+     *Environment variables*.
+3. Watch the logs until it prints *Listening for Jobs*. The runner appears under
+   **Settings → Actions → Runners** as idle.
 
 ## Repository settings the devbox workflow reads
 
