@@ -100,6 +100,8 @@ RUN userdel -r ubuntu 2>/dev/null || true \
 # written into /home/dev at build time. /home/dev is usually a volume, and
 # whether docker seeds a volume from the image depends on how it is backed -
 # the entrypoint makes it deterministic instead.
+# Only a shell that starts in $HOME (a plain `ssh` login) moves to /work; an
+# editor terminal opened in a project folder must stay where it was opened.
 RUN mkdir -p /etc/devbox /work \
     && printf '%s\n' \
       '# devbox-shell-setup (marker: do not remove, prevents re-appending)' \
@@ -109,7 +111,7 @@ RUN mkdir -p /etc/devbox /work \
       "alias gpus='nvidia-smi --query-gpu=index,name,memory.used,memory.total,utilization.gpu --format=csv'" \
       "alias gpuwho='nvidia-smi --query-compute-apps=gpu_uuid,pid,used_memory,process_name --format=csv'" \
       'export VIRTUAL_ENV=/opt/venv' \
-      'cd /work 2>/dev/null || true' \
+      '[ "$PWD" = "$HOME" ] && cd /work 2>/dev/null || true' \
       '[ -t 1 ] && command -v nvidia-smi >/dev/null && echo "GPUs may be shared with other workloads on this host - run gpus before you grab one." || true' \
       > /etc/devbox/bashrc.append \
     && chown -R ${DEV_UID}:${DEV_GID} /home/dev
