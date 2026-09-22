@@ -14,6 +14,9 @@ name: github-runner
 services:
   runner:
     image: myoung34/github-runner:latest
+    # Runner updates come from the image, not the runner itself (see below),
+    # so every redeploy pulls the newest one.
+    pull_policy: always
     container_name: github-runner
     restart: unless-stopped
     environment:
@@ -26,12 +29,18 @@ services:
       # Jobs run in this path on the HOST too (see the bind mount below), so
       # bind mounts that jobs pass to the host's Docker daemon resolve.
       RUNNER_WORKDIR: /tmp/github-runner/work
+      # Self-update cannot work in a container: the runner exits so its
+      # update script can swap in the new bin/, but that exit stops the
+      # container and kills the script, leaving no bin/ at all - every
+      # restart then fails. GitHub refuses non-updating runners only once
+      # they are 30+ days behind a release, so redeploy (which re-pulls the
+      # image) at least monthly.
+      DISABLE_AUTO_UPDATE: "true"
       # Registration: with ACCESS_TOKEN the image registers on every start
       # (--replace, so it takes over its old entry) and deregisters on stop.
       # Do not set CONFIGURED_ACTIONS_RUNNER_FILES_DIR (registration reuse)
       # without DISABLE_AUTOMATIC_DEREGISTRATION=true - the image then exits 1
-      # on every start. Auto-update stays on, so the runner never falls below
-      # GitHub's minimum version.
+      # on every start.
     volumes:
       # Jobs build and push images through the host's Docker daemon, which
       # also keeps its layer cache between runs.

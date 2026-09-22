@@ -35,6 +35,16 @@ On the runner host:
 3. Watch the logs until it prints *Listening for Jobs*. The runner appears under
    **Settings → Actions → Runners** as idle.
 
+## Keeping it updated
+
+The runner's self-update is off: it cannot complete inside a container and leaves it unable to
+start. Updates come from the image instead — **redeploy at least monthly** (Portainer: *Update the
+stack* with *Re-pull image*; compose: `docker compose up -d`, which re-pulls). GitHub stops sending
+jobs to a runner more than 30 days behind the latest release.
+
+If a runner ever loops on `./bin/Runner.Listener: No such file or directory`, a self-update broke
+it. Restarting does not help; **recreate** the container (redeploy the stack) to get a clean one.
+
 ## Repository settings the devbox workflow reads
 
 **Settings → Secrets and variables → Actions:**
