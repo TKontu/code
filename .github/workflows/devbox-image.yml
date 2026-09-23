@@ -81,6 +81,68 @@ jobs:
           docker run --rm --entrypoint sh "$IMAGE:latest" -c \
             'gh --version && git --version && python --version && test -f /etc/ssh/sshd_config.d/10-devbox.conf && test -x /usr/local/bin/devbox-entrypoint'
 
+      # The uv wrapper is what keeps virtualenvs off a /work network share.
+      # It fails silently and expensively if it ever stops resolving, so
+      # assert the redirect rather than just its presence.
+      - name: Smoke test - uv wrapper redirects /work virtualenvs
+        run: |
+          docker run --rm --entrypoint sh "$IMAGE:latest" -c '
+            set -eu
+            test -x /usr/local/lib/uv/uv || { echo "real uv missing"; exit 1; }
+            uv --version >/dev/null || { echo "wrapper does not reach real uv"; exit 1; }
+
+            # Stub the real uv so we can read back what the wrapper exported.
+            mv /usr/local/lib/uv/uv /usr/local/lib/uv/uv.real
+            printf "#!/bin/sh\necho \"\${UV_PROJECT_ENVIRONMENT:-unset}\"\n" > /usr/local/lib/uv/uv
+            chmod 0755 /usr/local/lib/uv/uv
+
+            mkdir -p /work/demo /local/demo
+            touch /work/demo/pyproject.toml /local/demo/pyproject.toml
+
+            got=$(cd /work/demo && uv run true)
+            case "$got" in
+              /home/dev/venvs/demo-*) ;;
+              *) echo "share project not redirected: $got"; exit 1 ;;
+            esac
+
+            # A nested subdir must resolve to the same project root.
+            mkdir -p /work/demo/src/pkg
+            nested=$(cd /work/demo/src/pkg && uv run true)
+            test "$nested" = "$got" || { echo "nested subdir differs: $nested vs $got"; exit 1; }
+
+            # A project on local disk keeps the default in-tree .venv.
+            local_got=$(cd /local/demo && uv run true)
+            test "$local_got" = "unset" || { echo "local project redirected: $local_got"; exit 1; }
+
+            # An explicit choice always wins.
+            explicit=$(cd /work/demo && UV_PROJECT_ENVIRONMENT=/tmp/mine uv run true)
+            test "$explicit" = "/tmp/mine" || { echo "explicit env overridden: $explicit"; exit 1; }
+
+            echo "uv wrapper OK"
+          '
+
+      # core.fileMode must be off for repos on the share and on everywhere
+      # else, and git-lfs must survive the append to /etc/gitconfig.
+      - name: Smoke test - git fileMode scoped to the share
+        run: |
+          docker run --rm --entrypoint sh "$IMAGE:latest" -c '
+            set -eu
+            git config --system --get filter.lfs.clean >/dev/null \
+              || { echo "git-lfs system config was clobbered"; exit 1; }
+
+            mkdir -p /work/repo /local/repo
+            git -C /work/repo init -q
+            git -C /local/repo init -q
+
+            share=$(git -C /work/repo config --get core.fileMode)
+            test "$share" = "false" || { echo "share repo tracks fileMode: $share"; exit 1; }
+
+            local_mode=$(git -C /local/repo config --get core.fileMode)
+            test "$local_mode" = "true" || { echo "local repo stopped tracking fileMode: $local_mode"; exit 1; }
+
+            echo "git fileMode scoping OK"
+          '
+
       - name: Push
         run: |
           for t in $TAGS; do docker push "$IMAGE:$t"; done

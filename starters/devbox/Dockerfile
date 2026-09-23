@@ -22,6 +22,9 @@ ENV DEBIAN_FRONTEND=noninteractive \
     DEV_UID=${DEV_UID} \
     DEV_GID=${DEV_GID} \
     VIRTUAL_ENV=/opt/venv \
+    DEVBOX_VENV_HOME=/home/dev/venvs \
+    UV_CACHE_DIR=/home/dev/.cache/uv \
+    PYTHONPYCACHEPREFIX=/home/dev/.cache/pycache \
     PATH=/home/dev/.local/bin:/opt/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 # One apt layer. Splitting `apt-get update` into its own layer is what
@@ -51,9 +54,83 @@ RUN /opt/venv/bin/pip install --no-cache-dir \
       jupyterlab ipykernel \
       ruff pytest
 
-RUN curl -fsSL https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh \
+# uv goes to /usr/local/lib/uv, not onto PATH: the wrapper below takes its
+# place at /usr/local/bin/uv.
+RUN curl -fsSL https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/lib/uv sh \
     && curl -sSL https://install.python-poetry.org | POETRY_HOME=/opt/poetry python3 - \
     && ln -sf /opt/poetry/bin/poetry /usr/local/bin/poetry
+
+# A project on a network share must not keep its virtualenv or tool caches
+# there. Two reasons, and neither is fixable with mount options:
+#   - correctness: /work is visible to other machines with other interpreters,
+#     and one directory cannot be a valid venv for two of them
+#   - cost: a venv is tens of thousands of files, and SMB is ~33x slower per
+#     read than local disk, so every type-check pays for it
+# uv discovers the project root by walking up to the nearest pyproject.toml.
+# This wrapper does the same, and for a project under a share it redirects the
+# environment and the caches onto local disk. A project already on local disk
+# is left alone - the default .venv is right there. Setting these here rather
+# than in /etc/environment is deliberate: they must be per-project, and a
+# wrapper is the only hook that fires for `ssh box 'cmd'` too, which sources
+# no shell files at all.
+RUN printf '%s\n' \
+      '#!/bin/sh' \
+      '# devbox uv wrapper: keeps virtualenvs and caches off network shares.' \
+      'set -eu' \
+      'REAL_UV=/usr/local/lib/uv/uv' \
+      '' \
+      '# An explicit choice always wins.' \
+      'if [ -n "${UV_PROJECT_ENVIRONMENT:-}" ]; then' \
+      '  exec "$REAL_UV" "$@"' \
+      'fi' \
+      '' \
+      'root=$PWD' \
+      'while [ "$root" != "/" ] && [ ! -f "$root/pyproject.toml" ]; do' \
+      '  root=$(dirname "$root")' \
+      'done' \
+      '' \
+      '# /opt/venv is the image general-purpose environment, not any project one.' \
+      '# Left set, uv prints a VIRTUAL_ENV-does-not-match warning on every single' \
+      '# project command, in every agent transcript.' \
+      'if [ "$root" != "/" ]; then' \
+      '  unset VIRTUAL_ENV' \
+      'fi' \
+      '' \
+      'case "$root" in' \
+      '  /work/*)' \
+      '    # basename alone collides across /work/a/api and /work/b/api.' \
+      '    tag=$(printf %s "$root" | md5sum | cut -c1-8)' \
+      '    slot="$(basename "$root")-$tag"' \
+      '    home="${DEVBOX_VENV_HOME:-/home/dev/venvs}"' \
+      '    UV_PROJECT_ENVIRONMENT="$home/$slot"' \
+      '    MYPY_CACHE_DIR="$home/.caches/$slot/mypy"' \
+      '    RUFF_CACHE_DIR="$home/.caches/$slot/ruff"' \
+      '    PYTEST_ADDOPTS="${PYTEST_ADDOPTS:+$PYTEST_ADDOPTS }-o cache_dir=$home/.caches/$slot/pytest"' \
+      '    export UV_PROJECT_ENVIRONMENT MYPY_CACHE_DIR RUFF_CACHE_DIR PYTEST_ADDOPTS' \
+      '    ;;' \
+      'esac' \
+      '' \
+      'exec "$REAL_UV" "$@"' \
+      > /usr/local/bin/uv \
+    && chmod 0755 /usr/local/bin/uv
+
+# The same share, the other half of the problem. CIFS cannot store a per-file
+# exec bit: it synthesizes one mode for every file from the mount options, so a
+# file looks executable to a host mounting with file_mode=0755 and not to this
+# container at 0664, and git then reports every file in the tree as modified.
+# Scoped to /work with a conditional include rather than set globally - repos
+# on local disk have real exec bits and must keep tracking them, or a
+# `chmod +x` silently stops being recorded. Nothing is lost on the share
+# either: git still stores the bit in the index, so CI on a normal filesystem
+# checks out correctly.
+# Appended with `git config` rather than written: git-lfs already owns
+# /etc/gitconfig. System config rather than /home/dev/.gitconfig, because the
+# home volume may start empty.
+RUN printf '%s\n' \
+      '[core]' \
+      '    fileMode = false' \
+      > /etc/gitconfig-share \
+    && git config --system 'includeIf.gitdir:/work/.path' /etc/gitconfig-share
 
 RUN curl -fsSL https://deb.nodesource.com/setup_${NODE_MAJOR}.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
@@ -150,15 +227,28 @@ RUN printf '%s\n' \
 #                        (non-interactive, non-login) which sources nothing
 #   /etc/profile.d     - covers interactive and login shells
 #   symlink            - last resort if PAM is ever disabled
+# UV_CACHE_DIR and PYTHONPYCACHEPREFIX are the two caches that are safe to
+# share across every project, so unlike the per-project ones in the uv wrapper
+# they belong here. UV_CACHE_DIR must sit on the same filesystem as the
+# virtualenvs it feeds - uv hardlinks wheels out of it, and across a
+# filesystem boundary it silently degrades to copying every file.
+# PYTHONPYCACHEPREFIX mirrors each source file's full absolute path beneath
+# the prefix, so projects cannot collide there.
 RUN printf '%s\n' \
       'PATH=/home/dev/.local/bin:/opt/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin' \
       'VIRTUAL_ENV=/opt/venv' \
       'LANG=C.UTF-8' \
       'CUDA_DEVICE_ORDER=PCI_BUS_ID' \
+      'DEVBOX_VENV_HOME=/home/dev/venvs' \
+      'UV_CACHE_DIR=/home/dev/.cache/uv' \
+      'PYTHONPYCACHEPREFIX=/home/dev/.cache/pycache' \
       > /etc/environment \
     && printf '%s\n' \
       'export PATH=/home/dev/.local/bin:/opt/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin' \
       'export VIRTUAL_ENV=/opt/venv' \
+      'export DEVBOX_VENV_HOME=/home/dev/venvs' \
+      'export UV_CACHE_DIR=/home/dev/.cache/uv' \
+      'export PYTHONPYCACHEPREFIX=/home/dev/.cache/pycache' \
       > /etc/profile.d/10-devbox.sh \
     && chmod 0644 /etc/profile.d/10-devbox.sh \
     && ln -sf /opt/venv/bin/python /usr/local/bin/python
@@ -185,9 +275,15 @@ RUN printf '%s\n' \
       'if ! grep -q devbox-shell-setup /home/dev/.bashrc; then' \
       '  cat /etc/devbox/bashrc.append >> /home/dev/.bashrc' \
       'fi' \
-      'mkdir -p /home/dev/.cache/huggingface /home/dev/.ssh' \
+      'mkdir -p /home/dev/.cache/huggingface /home/dev/.cache/uv /home/dev/.cache/pycache /home/dev/.ssh' \
       'chmod 700 /home/dev/.ssh' \
       'chown -R dev:dev /home/dev/.bashrc /home/dev/.cache /home/dev/.ssh' \
+      '' \
+      '# Local home for virtualenvs and per-project tool caches (see the uv' \
+      '# wrapper). Deliberately not chowned -R: this tree grows to tens of' \
+      '# thousands of files per project, and it is only ever written as dev.' \
+      'mkdir -p /home/dev/venvs/.caches' \
+      'chown dev:dev /home/dev/venvs /home/dev/venvs/.caches' \
       '' \
       '# Password auth is off, so empty authorized_keys means a box nobody' \
       '# can enter. Fail now and loudly, not at connect time.' \
