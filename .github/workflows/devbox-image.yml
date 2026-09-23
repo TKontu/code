@@ -121,6 +121,28 @@ jobs:
             echo "uv wrapper OK"
           '
 
+      # core.fileMode must be off for repos on the share and on everywhere
+      # else, and git-lfs must survive the append to /etc/gitconfig.
+      - name: Smoke test - git fileMode scoped to the share
+        run: |
+          docker run --rm --entrypoint sh "$IMAGE:latest" -c '
+            set -eu
+            git config --system --get filter.lfs.clean >/dev/null \
+              || { echo "git-lfs system config was clobbered"; exit 1; }
+
+            mkdir -p /work/repo /local/repo
+            git -C /work/repo init -q
+            git -C /local/repo init -q
+
+            share=$(git -C /work/repo config --get core.fileMode)
+            test "$share" = "false" || { echo "share repo tracks fileMode: $share"; exit 1; }
+
+            local_mode=$(git -C /local/repo config --get core.fileMode)
+            test "$local_mode" = "true" || { echo "local repo stopped tracking fileMode: $local_mode"; exit 1; }
+
+            echo "git fileMode scoping OK"
+          '
+
       - name: Push
         run: |
           for t in $TAGS; do docker push "$IMAGE:$t"; done

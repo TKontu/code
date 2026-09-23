@@ -114,6 +114,24 @@ RUN printf '%s\n' \
       > /usr/local/bin/uv \
     && chmod 0755 /usr/local/bin/uv
 
+# The same share, the other half of the problem. CIFS cannot store a per-file
+# exec bit: it synthesizes one mode for every file from the mount options, so a
+# file looks executable to a host mounting with file_mode=0755 and not to this
+# container at 0664, and git then reports every file in the tree as modified.
+# Scoped to /work with a conditional include rather than set globally - repos
+# on local disk have real exec bits and must keep tracking them, or a
+# `chmod +x` silently stops being recorded. Nothing is lost on the share
+# either: git still stores the bit in the index, so CI on a normal filesystem
+# checks out correctly.
+# Appended with `git config` rather than written: git-lfs already owns
+# /etc/gitconfig. System config rather than /home/dev/.gitconfig, because the
+# home volume may start empty.
+RUN printf '%s\n' \
+      '[core]' \
+      '    fileMode = false' \
+      > /etc/gitconfig-share \
+    && git config --system 'includeIf.gitdir:/work/.path' /etc/gitconfig-share
+
 RUN curl -fsSL https://deb.nodesource.com/setup_${NODE_MAJOR}.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/* \
