@@ -102,10 +102,33 @@ tree as modified on every status.
 Scoped rather than global on purpose. A repo on local disk has real exec bits and keeps tracking
 them, so `chmod +x` still gets recorded there. Nothing is lost on the share either — git stores the
 bit in the index regardless, so CI on a normal filesystem checks out correctly; only the on-disk
-bit is ignored. No project needs its own `core.fileMode` setting, and a per-repo one is redundant.
+bit is ignored.
 
 It is system config rather than `/home/dev/.gitconfig` because the home volume may start empty, and
 it is *appended* with `git config` rather than written, because git-lfs already owns that file.
+
+**This include is a backstop, not the main mechanism.** Git probes the filesystem at `git init`
+and writes the answer into the repo's *own* `.git/config`, and local config outranks system config.
+On a share the probe gets it right on its own, so a repo created there needs nothing. The include
+only decides repos where that key is absent.
+
+The repos that actually break are the ones created somewhere else and later moved or copied onto
+the share: they carry `fileMode = true` from a filesystem where it was correct, and that local
+value wins over everything here. Nothing in the image can fix those — they need the value corrected
+per repo:
+
+```bash
+# from the root of the share, fix every repo that arrived with the wrong answer
+for g in */.git; do
+  d=${g%/.git}
+  [ "$(git -C "$d" config --local --get core.fileMode)" = "true" ] \
+    && git -C "$d" config --local core.fileMode false && echo "fixed: $d"
+done
+```
+
+Worth knowing while you are there: `git clone` of a *local path* onto a CIFS share fails with
+`fatal: hardlink different from source`, because it hardlinks objects by default. Use
+`git clone --no-hardlinks`, or clone over the network.
 
 ## What none of this fixes
 
