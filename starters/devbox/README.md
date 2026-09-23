@@ -38,7 +38,7 @@ Recommended, so rebuilds keep state:
 | Volume | Container path | Keeps |
 | --- | --- | --- |
 | host keys | `/etc/ssh/host_keys` | The SSH identity — without it, every rebuild triggers "REMOTE HOST IDENTIFICATION HAS CHANGED" |
-| home | `/home/dev` | Shell config, git identity, `gh` login, VS Code server |
+| home | `/home/dev` | Shell config, git identity, `gh` login, VS Code server, and every project virtualenv (below) |
 
 Publish container port `22` on a free host port, and `8888` if you run Jupyter. The only login is
 user `dev`, and `dev` has passwordless sudo — so never mount the host's docker socket.
@@ -46,3 +46,45 @@ user `dev`, and `dev` has passwordless sudo — so never mount the host's docker
 To add a machine later, append its public key to the mounted key file; sshd reads it on the next
 connection, no restart needed. Edit the file in place (`>>`, or `cat tmp > file`) rather than
 replacing it, or a single-file bind mount keeps pointing at the old copy.
+
+## Virtualenvs never live under `/work`
+
+If `/work` is a network share — the common case — a virtualenv must not sit inside the project
+directory, for two independent reasons:
+
+- **Correctness.** The share is visible to other machines running other interpreters. One `.venv`
+  cannot be valid for a 3.12 container and a 3.14 host at once, and the failure is silent until
+  something reads `pyvenv.cfg` and believes it.
+- **Cost.** A virtualenv is tens of thousands of files. Measured on an SMB share against local
+  disk on the same box: reads ~33x slower, writes ~40x, stats ~17x. Since tooling walks the
+  environment far more than it walks your source, this is usually *most* of a test or type-check
+  run.
+
+So `/usr/local/bin/uv` is a small wrapper. It finds the project root the way uv does — nearest
+ancestor holding `pyproject.toml` — and if that root is under `/work` it points the environment and
+the per-project tool caches at local disk instead:
+
+| | Location |
+| --- | --- |
+| Virtualenv | `/home/dev/venvs/<project>-<hash>` |
+| mypy / ruff / pytest caches | `/home/dev/venvs/.caches/<project>-<hash>/` |
+| uv wheel cache, `__pycache__` | `/home/dev/.cache/` (shared; safe to) |
+
+The hash is of the full project path, so `/work/a/api` and `/work/b/api` get separate slots. A
+project already on local disk is left alone, and an explicit `UV_PROJECT_ENVIRONMENT` always wins.
+Nothing in any project file changes, and nothing here is required for the kit's contracts — a
+project that has never seen this box behaves identically.
+
+It is a wrapper rather than an entry in `/etc/environment` because the value has to be per-project,
+and because agents commonly run `ssh box '<cmd>'`, which is non-interactive and non-login and so
+sources no shell files at all. Consequences worth knowing:
+
+- `uv sync` in a project is what creates the environment; `.venv/` under `/work` is then dead
+  weight and should be deleted.
+- Mount `/home/dev` as a volume or every environment is rebuilt on each redeploy.
+- Tools invoked directly rather than through `uv run` (a bare `mypy`) miss the cache redirection.
+  Prefer `uv run`, which is what the Python profile's Project Commands table uses.
+
+What this does *not* fix: CIFS delivers no inotify events, so file watchers and `--reload` will not
+see edits made from another machine. If you need those, the project's working copy has to be on
+local disk too, with git as the sync boundary rather than the share.
