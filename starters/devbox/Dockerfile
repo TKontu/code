@@ -193,6 +193,61 @@ RUN mkdir -p /etc/devbox /work \
       > /etc/devbox/bashrc.append \
     && chown -R ${DEV_UID}:${DEV_GID} /home/dev
 
+# tmux defaults. An SSH session that dies takes the shell's children with it -
+# a long build, a test run, an agent mid-task. Claude Code has no detach or
+# daemon mode (its own docs say to start it inside tmux or screen), so a
+# multiplexer is the only thing between a laptop going to sleep and a lost
+# session.
+#
+# Unlike the bashrc above this needs no entrypoint seeding: tmux reads
+# /etc/tmux.conf directly, so the config lives in the image and cannot go
+# missing with an empty /home/dev volume. A user's own ~/.tmux.conf still
+# overrides it. Settings match cheatsheets/tmux-cheatsheet.md so the docs and
+# the image cannot drift apart.
+#
+# The three non-obvious lines each fix a real full-screen-app failure:
+#   allow-passthrough  TUI escape sequences never reach the outer terminal
+#                      without it, so desktop notifications silently vanish
+#   extended-keys      without it Shift+Enter does not reach the application,
+#                      so multi-line input breaks only when inside tmux
+#   escape-time 0      the 500ms default reads as laggy, garbled keys
+RUN printf '%s\n' \
+      '# devbox tmux defaults. Override per-user in ~/.tmux.conf.' \
+      '' \
+      '# Mouse on, so the wheel scrolls the application rather than tmux' \
+      '# history. Hold SHIFT while dragging to select terminal text instead.' \
+      'set -g mouse on' \
+      '' \
+      '# True colour, and a terminal type full-screen apps recognise.' \
+      'set -g default-terminal "tmux-256color"' \
+      'set -ga terminal-overrides ",*256col*:Tc"' \
+      '' \
+      '# Let OSC 52 clipboard writes and other escape sequences through.' \
+      'set -g set-clipboard on' \
+      'set -g allow-passthrough on' \
+      '' \
+      '# No Escape delay.' \
+      'set -sg escape-time 0' \
+      '' \
+      '# Extended keys, so Shift+Enter reaches the application.' \
+      'set -s extended-keys on' \
+      "set -as terminal-features 'tmux-256color:extkeys'" \
+      'bind-key -n S-Enter send-keys Escape "[13;2u"' \
+      '' \
+      '# Scrollback worth having when you do drop into copy mode (C-b [).' \
+      'set -g history-limit 50000' \
+      '' \
+      '# Number windows and panes from 1; 0 is a long reach.' \
+      'set -g base-index 1' \
+      'setw -g pane-base-index 1' \
+      '' \
+      '# Splits bound to the keys they are drawn with.' \
+      'bind | split-window -h' \
+      'bind - split-window -v' \
+      '' \
+      'bind r source-file /etc/tmux.conf \; display "tmux config reloaded"' \
+      > /etc/tmux.conf
+
 # sshd drop-in; Ubuntu's sshd_config Includes this dir first and first
 # match wins, so these beat the shipped defaults.
 #   - authorized keys come from a root-owned read-only path, which avoids

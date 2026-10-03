@@ -130,6 +130,40 @@ Worth knowing while you are there: `git clone` of a *local path* onto a CIFS sha
 `fatal: hardlink different from source`, because it hardlinks objects by default. Use
 `git clone --no-hardlinks`, or clone over the network.
 
+## Sessions that outlive your laptop
+
+An SSH session that dies takes the shell's children with it — a long build, a test run, an agent
+mid-task. The sshd drop-in buys some tolerance (`ClientAliveInterval 30` × `ClientAliveCountMax
+240` = two hours), but that only helps while the TCP connection itself survives. A laptop
+shutdown, an IP change or a NAT timeout tears down the socket, and the grace period never applies.
+
+So use tmux, which is installed and preconfigured at `/etc/tmux.conf`:
+
+```bash
+ssh <box>
+tmux new -A -s work        # -A: attach if it exists, else create
+# ... laptop dies ...
+ssh <box>
+tmux attach -d -t work     # -d detaches the stale client; also fixes the resize squish
+```
+
+`/etc/tmux.conf` rather than a seeded `~/.tmux.conf`, because the home volume may start empty and
+tmux reads the system file directly. Your own `~/.tmux.conf` still overrides it. The settings match
+`cheatsheets/tmux-cheatsheet.md`; three of them are load-bearing for full-screen applications —
+`allow-passthrough` (or escape sequences never reach the outer terminal and notifications vanish),
+`extended-keys` (or Shift+Enter never arrives, so multi-line input breaks *only* under tmux), and
+`escape-time 0` (the 500 ms default reads as laggy, garbled keys).
+
+Two limits worth knowing:
+
+- **tmux survives your laptop, not a redeploy.** The server is a container process, so replacing
+  the container kills every session. Anything that must outlive a redeploy belongs in git.
+- **Claude Code has no detach or daemon mode** — its own docs say to start it inside tmux or
+  screen. What it does have is on-disk session transcripts under `~/.claude/projects/`, so with
+  `/home/dev` mounted as a volume a conversation is resumable with `claude --resume` even after a
+  redeploy. A turn interrupted mid-tool-call is marked as cut off, and on resume Claude is told to
+  check whether the call took effect before retrying it.
+
 ## What none of this fixes
 
 CIFS delivers no inotify events, so file watchers and `--reload` will not see edits made from
