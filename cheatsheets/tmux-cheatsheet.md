@@ -90,7 +90,9 @@ Two things were fighting each other; here's how to get **both** scroll and paste
 
 ## Recommended `~/.tmux.conf` — TUI-friendly
 
-Put this at `/home/dev/.tmux.conf` (survives rebuilds — it's on your mounted `/home/dev` volume).
+The `starters/devbox` image already ships these settings at `/etc/tmux.conf`, so there is nothing
+to do on that box. Elsewhere, put them in `~/.tmux.conf` — which also overrides the system file if
+you want to change one.
 
 ```tmux
 # Mouse ON so the scroll wheel is forwarded INTO Claude Code (it scrolls its own view).
@@ -108,6 +110,13 @@ set -g allow-passthrough on
 
 # No Escape delay — fixes laggy / garbled keys in TUIs
 set -sg escape-time 0
+
+# Extended keys, so Shift+Enter reaches the application. Without these,
+# multi-line input breaks ONLY inside tmux, which makes it look like the
+# application's bug rather than the multiplexer's.
+set -s extended-keys on
+set -as terminal-features 'tmux-256color:extkeys'
+bind-key -n S-Enter send-keys Escape "[13;2u"
 
 # Bigger scrollback for when you DO use copy mode (C-b [)
 set -g history-limit 50000

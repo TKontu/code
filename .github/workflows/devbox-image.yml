@@ -149,6 +149,39 @@ jobs:
             echo "git fileMode scoping OK"
           '
 
+      # tmux is what keeps a session alive across an SSH disconnect, and a
+      # config that fails to load is invisible until a TUI misbehaves hours
+      # later. Assert the settings that actually took effect, not the file.
+      - name: Smoke test - tmux defaults load
+        run: |
+          docker run --rm --entrypoint sh "$IMAGE:latest" -c '
+            set -eu
+            test -f /etc/tmux.conf || { echo "/etc/tmux.conf missing"; exit 1; }
+
+            # A load error goes to stderr and still yields a session, so
+            # capture it rather than trusting the exit status.
+            err=$(tmux -L ci new-session -d -s probe 2>&1 || true)
+            test -z "$err" || { echo "tmux reported config errors: $err"; exit 1; }
+
+            check() {
+              got=$(tmux -L ci show-options "$1" "$2")
+              test "$got" = "$2 $3" || { echo "$2: expected $3, got: $got"; exit 1; }
+            }
+            check -g history-limit 50000
+            check -g allow-passthrough on
+            check -g set-clipboard on
+            check -s extended-keys on
+            check -s escape-time 0
+
+            tmux -L ci show-options -s terminal-features | grep -q extkeys \
+              || { echo "terminal-features missing extkeys"; exit 1; }
+            tmux -L ci list-keys -T root | grep -q S-Enter \
+              || { echo "S-Enter is not bound"; exit 1; }
+
+            tmux -L ci kill-server
+            echo "tmux defaults OK"
+          '
+
       - name: Push
         run: |
           for t in $TAGS; do docker push "$IMAGE:$t"; done
