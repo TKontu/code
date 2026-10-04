@@ -30,6 +30,26 @@ They are additions, not overrides: everything below still works. Note you cannot
 a built-in such as `new`, because the alias body is prepended — `new=new-session -A -s` turns
 `tmux new -d foo` into `new-session -A -s -d foo`, where `-s` swallows the `-d`.
 
+**`command-alias` alone cannot serve the first command of a session.** It is a *server* option, read
+when the server starts, so with nothing running the client cannot resolve an unknown name and fails
+with `error connecting to /tmp/tmux-1000/default`. (`tmux start-server` does not help — with no
+sessions it exits at once.) To make them work from cold, rewrite in the shell instead, so tmux
+receives `new-session` and starts a server itself:
+
+```bash
+tmux() {
+  case "${1:-}" in
+    instance) shift; command tmux new-session -A -s "$@" ;;
+    resume)   shift; command tmux attach-session -d -t "$@" ;;
+    sessions) shift; command tmux list-sessions "$@" ;;
+    *)        command tmux "$@" ;;
+  esac
+}
+```
+
+Keep both: the function covers cold start in interactive shells, and `command-alias` covers
+non-interactive use such as `ssh <box> 'tmux sessions'`, where no shell config is read.
+
 ### The standard forms
 
 | Command (from shell) | Does |

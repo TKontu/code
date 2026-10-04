@@ -319,9 +319,45 @@ RUN printf '%s\n' \
       'export DEVBOX_VENV_HOME=/home/dev/venvs' \
       'export UV_CACHE_DIR=/home/dev/.cache/uv' \
       'export PYTHONPYCACHEPREFIX=/home/dev/.cache/pycache' \
+      '[ -r /etc/devbox/tmux-commands.sh ] && . /etc/devbox/tmux-commands.sh' \
       > /etc/profile.d/10-devbox.sh \
     && chmod 0644 /etc/profile.d/10-devbox.sh \
     && ln -sf /opt/venv/bin/python /usr/local/bin/python
+
+# The tmux command-alias entries in /etc/tmux.conf cannot serve the FIRST
+# command of a session. command-alias is a server option read when the server
+# starts, so with no server running the client cannot resolve an unknown
+# command name - it tries to connect instead of starting one, and you get
+# "error connecting to /tmp/tmux-1000/default". `tmux start-server` does not
+# help: with no sessions it exits immediately.
+#
+# So translate in the shell, before tmux is invoked. tmux then sees
+# new-session, which it knows how to bootstrap a server for. Everything else
+# passes through untouched, and `command tmux` prevents recursion.
+#
+# This lives in the image and is sourced from /etc/profile.d (login shells)
+# and /etc/bash.bashrc (interactive non-login shells, e.g. editor terminals).
+# Deliberately NOT in /etc/devbox/bashrc.append: the entrypoint appends that
+# only when its marker is absent from /home/dev/.bashrc, so on any box that
+# has already booted once, changes there can never arrive.
+RUN printf '%s\n' \
+      '# devbox tmux commands. See also command-alias in /etc/tmux.conf, which' \
+      '# covers non-interactive use once a server is already running.' \
+      'tmux() {' \
+      '  case "${1:-}" in' \
+      '    instance) shift; command tmux new-session -A -s "$@" ;;' \
+      '    resume)   shift; command tmux attach-session -d -t "$@" ;;' \
+      '    sessions) shift; command tmux list-sessions "$@" ;;' \
+      '    *)        command tmux "$@" ;;' \
+      '  esac' \
+      '}' \
+      > /etc/devbox/tmux-commands.sh \
+    && chmod 0644 /etc/devbox/tmux-commands.sh \
+    && printf '%s\n' \
+      '' \
+      '# devbox: plain-English tmux session commands (see the file for why).' \
+      '[ -r /etc/devbox/tmux-commands.sh ] && . /etc/devbox/tmux-commands.sh' \
+      >> /etc/bash.bashrc
 
 RUN printf '%s\n' \
       '#!/bin/sh' \

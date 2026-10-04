@@ -203,6 +203,58 @@ jobs:
             echo "tmux defaults OK"
           '
 
+      # The command-alias entries above cannot serve the FIRST command of a
+      # session: with no server running the client cannot resolve an unknown
+      # name, so it tries to connect and fails. The shell function covers that.
+      # This step exists because the original tests all pre-started a server
+      # and so never exercised the one path a user actually starts from.
+      - name: Smoke test - tmux session commands work from cold
+        run: |
+          docker run --rm --entrypoint sh "$IMAGE:latest" -c '
+            set -eu
+            # No apostrophes anywhere in this script: it is the body of sh -c
+            # in single quotes, and one of them would end the string early.
+            test -r /etc/devbox/tmux-commands.sh \
+              || { echo "/etc/devbox/tmux-commands.sh missing"; exit 1; }
+
+            # Defined in both shell shapes: login via profile.d, interactive
+            # non-login via bash.bashrc.
+            t=$(bash -lc "type -t tmux")
+            test "$t" = "function" || { echo "login shell: tmux is [$t]"; exit 1; }
+            t=$(bash -ic "type -t tmux" 2>/dev/null)
+            test "$t" = "function" || { echo "interactive shell: tmux is [$t]"; exit 1; }
+
+            # Translation, verified by stubbing the binary the function calls.
+            mkdir -p /tmp/stub
+            printf "#!/bin/sh\necho ARGS: \$*\n" > /tmp/stub/tmux
+            chmod +x /tmp/stub/tmux
+            # PATH must be set INSIDE the login shell: profile.d exports an
+            # absolute PATH, so a leading PATH=... on the outside is discarded
+            # and the real tmux runs instead of the stub.
+            expect() {
+              got=$(bash -lc "PATH=/tmp/stub:\$PATH; $1")
+              test "$got" = "ARGS: $2" || { echo "[$1] gave [$got], wanted [ARGS: $2]"; exit 1; }
+            }
+            expect "tmux instance demo" "new-session -A -s demo"
+            expect "tmux resume demo"   "attach-session -d -t demo"
+            expect "tmux sessions"      "list-sessions"
+            expect "tmux new -s native" "new -s native"
+
+            # From cold with the REAL tmux, the only failure may be the absent
+            # TTY. A connect error would mean no server was started at all -
+            # the exact bug this step guards.
+            mkdir -p /tmp/cold
+            out=$(TMUX_TMPDIR=/tmp/cold bash -lc "tmux instance demo" 2>&1 || true)
+            case "$out" in
+              *"error connecting"*)
+                echo "cold start still cannot start a server: $out"; exit 1 ;;
+            esac
+            ls -d /tmp/cold/tmux-* >/dev/null 2>&1 \
+              || { echo "no tmux server socket dir was created from cold"; exit 1; }
+
+            echo "tmux session commands OK"
+          '
+
       - name: Push
         run: |
           for t in $TAGS; do docker push "$IMAGE:$t"; done
