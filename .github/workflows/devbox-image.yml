@@ -192,10 +192,12 @@ jobs:
             tmux -L ci instance nosuch 2>&1 | grep -q terminal \
               || { echo "tmux instance did not resolve to new-session"; exit 1; }
 
-            # And that adding them did not shadow the built-ins.
+            # And that adding them did not shadow the built-ins. No apostrophes
+            # anywhere in this script: it is the body of sh -c in single
+            # quotes, and one of them ends the string early.
             tmux -L ci new -d -s stdform >/dev/null 2>&1
             tmux -L ci has-session -t stdform 2>/dev/null \
-              || { echo "built-in 'tmux new -s' was broken by the aliases"; exit 1; }
+              || { echo "the built-in new -s form was broken by the aliases"; exit 1; }
 
             tmux -L ci kill-server
             echo "tmux defaults OK"
