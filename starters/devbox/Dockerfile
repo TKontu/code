@@ -245,6 +245,21 @@ RUN printf '%s\n' \
       'bind | split-window -h' \
       'bind - split-window -v' \
       '' \
+      '# Plain-English session commands, so day-to-day use needs no flags:' \
+      '#   tmux instance <name>   start a named session, or step back into it' \
+      '#   tmux resume <name>     reattach to one, evicting a stale client' \
+      '#   tmux sessions          list what is still running' \
+      '#   tmux detach            already built in' \
+      '# The flags live here once instead of in your muscle memory. -s says the' \
+      '# argument is a NAME (without it new-session treats it as a command to' \
+      '# run); -A re-enters an existing session instead of erroring; and the -d' \
+      '# on attach evicts the dead client a dropped link leaves behind, which' \
+      '# otherwise squeezes the window down to that ghost terminal size.' \
+      '# Indices start at 100 because tmux fills 0-5 with its own aliases.' \
+      "set -s command-alias[100] 'instance=new-session -A -s'" \
+      "set -s command-alias[101] 'resume=attach -d -t'" \
+      "set -s command-alias[102] 'sessions=list-sessions'" \
+      '' \
       'bind r source-file /etc/tmux.conf \; display "tmux config reloaded"' \
       > /etc/tmux.conf
 

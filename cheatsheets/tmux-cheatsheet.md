@@ -7,6 +7,31 @@
 
 ## Sessions — the persistent containers for your work
 
+The `starters/devbox` image adds four flag-free commands via tmux's own `command-alias`, so the
+everyday cases need nothing memorised. Elsewhere, use the standard forms in the next table.
+
+| Command | Does |
+|---|---|
+| `tmux instance work` | Start a session named `work`, or step back into it if it exists |
+| `tmux resume work` | Reattach to `work`, evicting any stale client |
+| `tmux sessions` | List running sessions |
+| `tmux detach` | Leave the session running and return to the shell (built in) |
+
+To add them anywhere else, put this in your `~/.tmux.conf` — indices start at 100 because tmux
+fills 0–5 with its own aliases:
+
+```tmux
+set -s command-alias[100] 'instance=new-session -A -s'
+set -s command-alias[101] 'resume=attach -d -t'
+set -s command-alias[102] 'sessions=list-sessions'
+```
+
+They are additions, not overrides: everything below still works. Note you cannot usefully override
+a built-in such as `new`, because the alias body is prepended — `new=new-session -A -s` turns
+`tmux new -d foo` into `new-session -A -s -d foo`, where `-s` swallows the `-d`.
+
+### The standard forms
+
 | Command (from shell) | Does |
 |---|---|
 | `tmux new -s work` | Start a new session named `work` |
