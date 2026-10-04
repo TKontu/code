@@ -155,9 +155,27 @@ ssh <box>
 tmux resume iknos1
 ```
 
-These are tmux's own `command-alias` entries, not shell aliases, so they work from any shell and
-over `ssh <box> 'tmux sessions'` too. They are **additions** — every standard form such as
-`tmux new -s name` or `tmux attach -t name` still behaves exactly as documented.
+They are **additions** — every standard form such as `tmux new -s name` or `tmux attach -t name`
+still behaves exactly as documented.
+
+They are provided twice, on purpose, because neither mechanism covers everything:
+
+- **A shell function** in `/etc/devbox/tmux-commands.sh`, sourced from `/etc/profile.d` (login
+  shells) and `/etc/bash.bashrc` (interactive non-login shells, such as editor terminals). It
+  rewrites the word before tmux is invoked.
+- **tmux `command-alias` entries** in `/etc/tmux.conf`, which also cover non-interactive use such
+  as `ssh <box> 'tmux sessions'`, where no shell config is read at all.
+
+The shell function is what makes the *first* command of a session work. `command-alias` is a
+**server** option, read when the tmux server starts, so with no server running the client cannot
+resolve an unknown command name — it tries to connect to a server that is not there and fails with
+`error connecting to /tmp/tmux-1000/default`. `tmux start-server` does not help either: with no
+sessions it exits immediately. Rewriting in the shell sidesteps this entirely, because tmux then
+receives `new-session`, which it knows how to start a server for.
+
+Note neither mechanism lives in `/etc/devbox/bashrc.append`. The entrypoint appends that file only
+when its marker is absent from `/home/dev/.bashrc`, so on a box that has already booted once,
+changes there can never arrive.
 
 The flags they bake in are the ones easy to forget and annoying to omit: `-s` makes the argument a
 session *name* (without it `new-session` treats it as a command to run), `-A` re-enters an existing
