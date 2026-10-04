@@ -137,15 +137,32 @@ mid-task. The sshd drop-in buys some tolerance (`ClientAliveInterval 30` × `Cli
 240` = two hours), but that only helps while the TCP connection itself survives. A laptop
 shutdown, an IP change or a NAT timeout tears down the socket, and the grace period never applies.
 
-So use tmux, which is installed and preconfigured at `/etc/tmux.conf`:
+So use tmux, which is installed and preconfigured at `/etc/tmux.conf`. The config adds four
+plain-English commands so routine use needs no flags at all:
+
+| command | what it does |
+| --- | --- |
+| `tmux instance <name>` | start a named session, or step back into it if it already exists |
+| `tmux resume <name>` | reattach to a session, evicting any stale client |
+| `tmux sessions` | list what is still running |
+| `tmux detach` | leave the session running and return to the shell (built in) |
 
 ```bash
 ssh <box>
-tmux new -A -s work        # -A: attach if it exists, else create
+tmux instance iknos1
 # ... laptop dies ...
 ssh <box>
-tmux attach -d -t work     # -d detaches the stale client; also fixes the resize squish
+tmux resume iknos1
 ```
+
+These are tmux's own `command-alias` entries, not shell aliases, so they work from any shell and
+over `ssh <box> 'tmux sessions'` too. They are **additions** — every standard form such as
+`tmux new -s name` or `tmux attach -t name` still behaves exactly as documented.
+
+The flags they bake in are the ones easy to forget and annoying to omit: `-s` makes the argument a
+session *name* (without it `new-session` treats it as a command to run), `-A` re-enters an existing
+session instead of erroring, and `-d` on attach evicts the dead client a dropped connection leaves
+registered — otherwise tmux sizes the window to that ghost and your terminal arrives squashed.
 
 `/etc/tmux.conf` rather than a seeded `~/.tmux.conf`, because the home volume may start empty and
 tmux reads the system file directly. Your own `~/.tmux.conf` still overrides it. The settings match

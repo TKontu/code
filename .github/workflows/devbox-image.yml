@@ -178,6 +178,25 @@ jobs:
             tmux -L ci list-keys -T root | grep -q S-Enter \
               || { echo "S-Enter is not bound"; exit 1; }
 
+            # Plain-English session commands. Assert they RESOLVE, not just
+            # that the option is set - a typo in the alias body registers
+            # fine and only fails when someone types the command.
+            ca=$(tmux -L ci show-options -s command-alias)
+            for want in "instance=new-session -A -s" "resume=attach -d -t" "sessions=list-sessions"; do
+              echo "$ca" | grep -q "$want" || { echo "command-alias missing: $want"; exit 1; }
+            done
+            tmux -L ci sessions | grep -q probe \
+              || { echo "tmux sessions did not resolve"; exit 1; }
+            tmux -L ci resume nosuch 2>&1 | grep -q "find session" \
+              || { echo "tmux resume did not resolve to attach-session"; exit 1; }
+            tmux -L ci instance nosuch 2>&1 | grep -q terminal \
+              || { echo "tmux instance did not resolve to new-session"; exit 1; }
+
+            # And that adding them did not shadow the built-ins.
+            tmux -L ci new -d -s stdform >/dev/null 2>&1
+            tmux -L ci has-session -t stdform 2>/dev/null \
+              || { echo "built-in 'tmux new -s' was broken by the aliases"; exit 1; }
+
             tmux -L ci kill-server
             echo "tmux defaults OK"
           '
