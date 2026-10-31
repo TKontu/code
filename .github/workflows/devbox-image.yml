@@ -266,6 +266,20 @@ jobs:
             echo "tmux session commands OK"
           '
 
+      # A CI step that passes a script to `sh -c '...'` is a shell-quoting
+      # trap: an inner single quote closes the outer string, and the runner
+      # then hands the container a SPLIT, broken script. The step dies with
+      # "Unterminated quoted string" before it asserts anything - which
+      # looks like the smoke test failing when it is the test that is
+      # malformed.
+      #
+      # Catch it before it reaches the pipeline: run every `run:` block
+      # through the shell with `docker` replaced by a probe, and require
+      # that each -c body arrives as exactly ONE argument.
+      - name: Check shell quoting of the smoke tests
+        run: |
+          python3 ci/check-shell-quoting.py "$GITHUB_WORKSPACE/.github/workflows/devbox-image.yml"
+
       - name: Smoke test - herdr survives a fresh home volume
         run: |
           # The home volume is where the agents live, and it can be recreated
@@ -295,7 +309,14 @@ jobs:
             # And the chain must actually work: a login shell has to end up
             # with a running server. Asserting on file contents proves the
             # line was written; this proves it fires.
-            su dev -c "bash -lc \"sleep 3; herdr status 2>&1 | grep -q 'status: running'\"" \
+            #
+            # NO single quotes anywhere in this body. The body is already
+            # inside the outer sh -c quoted string, so an inner quote CLOSES
+            # it: the rest of the body is then parsed as shell source and
+            # the step dies with "Unterminated quoted string" before it runs
+            # anything. Hence the unquoted pattern - grep treats the dot as
+            # any character, which matches the space.
+            su dev -c "bash -lc \"sleep 3; herdr status 2>&1 | grep -q status:.running\"" \
               || { echo "a login shell did not start the herdr server"; exit 1; }
           '
           # Then: an empty home volume, provisioned by the entrypoint, must
