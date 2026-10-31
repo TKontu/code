@@ -177,6 +177,17 @@ jobs:
               || { echo "terminal-features missing extkeys"; exit 1; }
             tmux -L ci list-keys -T root | grep -q S-Enter \
               || { echo "S-Enter is not bound"; exit 1; }
+            # Copy on demand: a drag must not copy, Ctrl+Insert must.
+            tmux -L ci list-keys -T copy-mode | grep -q MouseDragEnd1Pane \
+              && { echo "a mouse drag still copies on release"; exit 1; }
+            tmux -L ci list-keys -T copy-mode | grep -q "C-IC.*copy-pipe-and-cancel" \
+              || { echo "C-IC does not copy in copy-mode"; exit 1; }
+            tmux -L ci list-keys -T root | grep -q "C-IC.*1b 5b 39 39 3b 36 75" \
+              || { echo "C-IC is not translated for Claude Code fullscreen"; exit 1; }
+            grep -qx "CLAUDE_CODE_NO_FLICKER=1" /etc/environment \
+              || { echo "fullscreen renderer not set in /etc/environment"; exit 1; }
+            test "$(bash -lc "echo \$CLAUDE_CODE_NO_FLICKER")" = 1 \
+              || { echo "fullscreen renderer not set for login shells"; exit 1; }
 
             # Plain-English session commands. Assert they RESOLVE, not just
             # that the option is set - a typo in the alias body registers

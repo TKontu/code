@@ -211,12 +211,30 @@ RUN mkdir -p /etc/devbox /work \
 #   extended-keys      without it Shift+Enter does not reach the application,
 #                      so multi-line input breaks only when inside tmux
 #   escape-time 0      the 500ms default reads as laggy, garbled keys
+# Copying is on demand, never on contact. tmux by default copies the moment a
+# mouse drag ends, so every stray drag overwrites the clipboard. Here a drag
+# only selects, and Ctrl+Insert - the CUA copy key, which is also what a
+# desktop-wide Super+C sends to terminals on some Linux desktops - copies.
+# With set-clipboard on the copy leaves as OSC 52, so it lands on the
+# clipboard of the machine you are sitting at, not the container's.
+# Claude Code's fullscreen renderer (see CLAUDE_CODE_NO_FLICKER below) owns
+# the mouse and keeps its own selection, so the key has to reach it instead.
+# Its keybindings cannot name Insert, so tmux hands it Ctrl+Shift+C as a CSI u
+# sequence (1b 5b 39 39 3b 36 75 = ESC [99;6u), its own copy key. That is a
+# no-op with nothing selected, never an interrupt.
 RUN printf '%s\n' \
       '# devbox tmux defaults. Override per-user in ~/.tmux.conf.' \
       '' \
       '# Mouse on, so the wheel scrolls the application rather than tmux' \
       '# history. Hold SHIFT while dragging to select terminal text instead.' \
       'set -g mouse on' \
+      '# Copy on demand: a drag only selects, Ctrl+Insert (Super+C) copies.' \
+      'unbind -T copy-mode MouseDragEnd1Pane' \
+      'unbind -T copy-mode-vi MouseDragEnd1Pane' \
+      'bind -T copy-mode C-IC send -X copy-pipe-and-cancel' \
+      'bind -T copy-mode-vi C-IC send -X copy-pipe-and-cancel' \
+      '# Claude Code fullscreen keeps its own selection: send it Ctrl+Shift+C.' \
+      "bind -n C-IC if -F '#{&&:#{alternate_on},#{m/r:^claude([.]exe)?\$,#{pane_current_command}}}' 'send-keys -H 1b 5b 39 39 3b 36 75' 'send-keys C-IC'" \
       '' \
       '# True colour, and a terminal type full-screen apps recognise.' \
       'set -g default-terminal "tmux-256color"' \
@@ -304,6 +322,13 @@ RUN printf '%s\n' \
 # filesystem boundary it silently degrades to copying every file.
 # PYTHONPYCACHEPREFIX mirrors each source file's full absolute path beneath
 # the prefix, so projects cannot collide there.
+# CLAUDE_CODE_NO_FLICKER selects Claude Code's fullscreen renderer. The
+# classic renderer redraws a streaming reply in place, but rows that have
+# already scrolled off the top cannot be redrawn: when a long table re-lays
+# out its columns mid-stream, scrollback keeps every stale width, which reads
+# as garbled output on scroll. Fullscreen re-renders the whole transcript on
+# the alternate screen, so scrolling always shows the final layout. Opt out
+# per user with `unset CLAUDE_CODE_NO_FLICKER` in ~/.bashrc.
 RUN printf '%s\n' \
       'PATH=/home/dev/.local/bin:/opt/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin' \
       'VIRTUAL_ENV=/opt/venv' \
@@ -312,6 +337,7 @@ RUN printf '%s\n' \
       'DEVBOX_VENV_HOME=/home/dev/venvs' \
       'UV_CACHE_DIR=/home/dev/.cache/uv' \
       'PYTHONPYCACHEPREFIX=/home/dev/.cache/pycache' \
+      'CLAUDE_CODE_NO_FLICKER=1' \
       > /etc/environment \
     && printf '%s\n' \
       'export PATH=/home/dev/.local/bin:/opt/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin' \
@@ -319,6 +345,7 @@ RUN printf '%s\n' \
       'export DEVBOX_VENV_HOME=/home/dev/venvs' \
       'export UV_CACHE_DIR=/home/dev/.cache/uv' \
       'export PYTHONPYCACHEPREFIX=/home/dev/.cache/pycache' \
+      'export CLAUDE_CODE_NO_FLICKER=1' \
       '[ -r /etc/devbox/tmux-commands.sh ] && . /etc/devbox/tmux-commands.sh' \
       > /etc/profile.d/10-devbox.sh \
     && chmod 0644 /etc/profile.d/10-devbox.sh \
@@ -385,6 +412,17 @@ RUN printf '%s\n' \
       'chmod 700 /home/dev/.ssh' \
       'chown -R dev:dev /home/dev/.bashrc /home/dev/.cache /home/dev/.ssh' \
       '' \
+      '# Claude Code fullscreen copies a selection the moment a drag ends,' \
+      '# unless copyOnSelect is false. Copying belongs to Ctrl+Insert (see' \
+      '# /etc/tmux.conf), so seed false - only when the key is absent, so a' \
+      '# later choice in /config sticks. Never fatal: a config Claude cannot' \
+      '# parse is its problem to report, not a reason to refuse to boot.' \
+      'cfg=/home/dev/.claude.json' \
+      'if [ ! -e "$cfg" ]; then' \
+      '  echo "{\"copyOnSelect\": false}" > "$cfg" && chown dev:dev "$cfg" || true' \
+      'elif jq -e "has(\"copyOnSelect\") | not" "$cfg" >/dev/null 2>&1; then' \
+      '  jq ".copyOnSelect = false" "$cfg" > "$cfg.devbox" && cat "$cfg.devbox" > "$cfg" || true' \
+      '  rm -f "$cfg.devbox"' \
       '# Local home for virtualenvs and per-project tool caches (see the uv' \
       '# wrapper). Deliberately not chowned -R: this tree grows to tens of' \
       '# thousands of files per project, and it is only ever written as dev.' \
