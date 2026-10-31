@@ -108,6 +108,7 @@ non-interactive use such as `ssh <box> 'tmux sessions'`, where no shell config i
 | `C-b [` | Enter scroll/copy mode |
 | `↑ ↓ PgUp PgDn` | Scroll around |
 | `Space` then `Enter` | Start selection, then copy |
+| Mouse drag, then `Ctrl+Insert` | Select, then copy (a drag alone does **not** copy) |
 | `C-b ]` | Paste tmux's copy buffer |
 | `q` | Quit copy mode |
 | `/` then text | Search forward (`n`/`N` to repeat) |
@@ -116,12 +117,25 @@ non-interactive use such as `ssh <box> 'tmux sessions'`, where no shell config i
 
 ## ⚠️ Running Claude Code (or any TUI) inside tmux
 
-Two things were fighting each other; here's how to get **both** scroll and paste:
-
-- **Scrolling needs `mouse on`.** Claude Code draws its conversation on the alternate
-  screen, so the only way the wheel scrolls *Claude's* history is for tmux to forward
-  the wheel into the app — which it only does with `set -g mouse on`. With mouse off,
-  the wheel goes nowhere useful inside a full-screen TUI.
+- **Use Claude Code's fullscreen renderer** (`export CLAUDE_CODE_NO_FLICKER=1`, or
+  `/tui fullscreen`). The classic renderer redraws a streaming reply in place, but rows
+  already scrolled off the top cannot be redrawn — when a long table re-lays out its
+  columns mid-stream, scrollback keeps every stale width and reads as garbled output.
+  Upgrading tmux does not help; it happens identically in 3.4 and 3.7. Fullscreen
+  re-renders the whole transcript on the alternate screen, so scrolling always shows the
+  final layout. Set `copyOnSelect` to `false` in `/config` so a drag does not copy.
+- **Scrolling needs `mouse on`.** In fullscreen, Claude Code draws its conversation on the
+  alternate screen, so the only way the wheel scrolls *Claude's* history is for tmux to
+  forward the wheel into the app — which it only does with `set -g mouse on`. With mouse
+  off, the wheel goes nowhere useful inside a full-screen TUI.
+- **Copy on demand with `Ctrl+Insert`** (the CUA copy key, and what a desktop-wide
+  Super+C sends on some Linux desktops). A drag only selects. The config below makes the
+  key copy a tmux selection, and hands Claude Code its own copy key (`Ctrl+Shift+C`)
+  when it is in fullscreen. Your terminal must let `Ctrl+Insert` through when *it* has
+  no selection — see the devbox README for Ghostty, Alacritty and VS Code.
+- **Shift+Enter needs the terminal to send it distinctly.** tmux can only forward what
+  arrives: a terminal that sends plain `Enter` for Shift+Enter (VS Code does) needs a
+  keybinding that sends `ESC [13;2u` instead.
 - **Paste is fixed by the clipboard/passthrough lines**, not by mouse mode. With
   `set-clipboard on`, `allow-passthrough on`, and `escape-time 0`, bracketed paste
   passes through cleanly even with the mouse on.
@@ -144,6 +158,14 @@ you want to change one.
 # Paste stays clean thanks to the clipboard/passthrough/escape-time lines below.
 # To hand-select terminal text, hold SHIFT while dragging (bypasses tmux).
 set -g mouse on
+
+# Copy on demand: a drag only selects, Ctrl+Insert (Super+C) copies.
+unbind -T copy-mode MouseDragEnd1Pane
+unbind -T copy-mode-vi MouseDragEnd1Pane
+bind -T copy-mode C-IC send -X copy-pipe-and-cancel
+bind -T copy-mode-vi C-IC send -X copy-pipe-and-cancel
+# Claude Code fullscreen keeps its own selection: send it Ctrl+Shift+C.
+bind -n C-IC if -F '#{&&:#{alternate_on},#{m/r:^claude([.]exe)?$,#{pane_current_command}}}' 'send-keys -H 1b 5b 39 39 3b 36 75' 'send-keys C-IC'
 
 # True color + correct terminal type so TUIs render correctly
 set -g default-terminal "tmux-256color"

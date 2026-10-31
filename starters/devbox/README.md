@@ -189,6 +189,37 @@ tmux reads the system file directly. Your own `~/.tmux.conf` still overrides it.
 `extended-keys` (or Shift+Enter never arrives, so multi-line input breaks *only* under tmux), and
 `escape-time 0` (the 500 ms default reads as laggy, garbled keys).
 
+### Claude Code under tmux: scrolling, copying, Shift+Enter
+
+The image sets `CLAUDE_CODE_NO_FLICKER=1` (in `/etc/environment` and `/etc/profile.d`), which
+selects Claude Code's **fullscreen renderer**. The classic renderer redraws a streaming reply in
+place, but rows that have already scrolled off the top cannot be redrawn. When a long table re-lays
+out its columns mid-stream, scrollback keeps every stale width, and scrolling up shows the same
+rows repeated at different widths. That is not a tmux bug and not a resize: it reproduces
+identically in tmux 3.4 and 3.7, and with tmux hidden from Claude Code entirely. Fullscreen
+re-renders the whole transcript on the alternate screen, so scrolling always shows the final
+layout. To opt out, put `unset CLAUDE_CODE_NO_FLICKER` in your `~/.bashrc`.
+
+Copying is **on demand, never on contact**. A mouse drag only selects; `Ctrl+Insert` copies — the
+CUA copy key, and what a desktop-wide Super+C sends to terminals on some Linux desktops. It works
+in a plain shell (tmux copy mode) and in Claude Code, which keeps its own selection in fullscreen:
+tmux translates the key into Claude Code's own copy key, `Ctrl+Shift+C`, which does nothing when
+nothing is selected. The copy travels as OSC 52, so it lands on the clipboard of the machine you
+are sitting at. On boot the entrypoint seeds `"copyOnSelect": false` into `~/.claude.json` — only
+when the key is absent, so a later choice in `/config` sticks.
+
+What your **local terminal** must do — this half cannot be fixed on the server:
+
+| Terminal | Shift+Enter | Ctrl+Insert |
+| --- | --- | --- |
+| Ghostty | `keybind = shift+enter=csi:13;2u` | prefix the copy bind with `performable:` (`keybind = performable:control+insert=copy_to_clipboard`) so it passes through when Ghostty has no selection of its own |
+| Alacritty | `{ key = "Return", mods = "Shift", chars = "\u001B[13;2u" }` | remove any `Ctrl+Insert` → `Copy` binding; Alacritty consumes the key even with nothing selected |
+| VS Code | add to `keybindings.json`: `{ "key": "shift+enter", "command": "workbench.action.terminal.sendSequence", "args": { "text": "\u001b[13;2u" }, "when": "terminalFocus" }` | the default copy binding applies only `when terminalTextSelected`, so the key already passes through |
+
+Without the Shift+Enter line, the terminal sends a plain `Enter` and nothing downstream can tell
+the two apart. To bypass tmux and Claude Code and select with the terminal itself, hold **Shift**
+while dragging.
+
 Two limits worth knowing:
 
 - **tmux survives your laptop, not a redeploy.** The server is a container process, so replacing
