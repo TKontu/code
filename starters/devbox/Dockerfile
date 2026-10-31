@@ -158,6 +158,29 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
     && apt-get update && apt-get install -y --no-install-recommends gh \
     && rm -rf /var/lib/apt/lists/*
 
+# Local backing services and headless-browser libraries, for projects whose
+# tests need a real Postgres or Redis or drive a browser. Installed by hand
+# at runtime, these vanish on every recreate, since the container layer is
+# not a volume.
+# Installed, NOT started: nothing here runs until you start it, so they never
+# hold 5432/6379 against a project that brings its own via compose. When you
+# need them:  sudo service postgresql start ; sudo service redis-server start
+# Their data lives in the container layer and is lost on recreate - these are
+# scratch databases for tests, not a place to keep anything.
+# The browser list is what Playwright's Chromium needs on noble (the t64
+# names are 24.04's); the browser binaries themselves stay per-project.
+# Its own layer, late in the file, so changing it does not re-download torch.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      postgresql postgresql-contrib redis-server \
+      libasound2t64 libatk-bridge2.0-0t64 libatk1.0-0t64 libatspi2.0-0t64 \
+      libcairo2 libcups2t64 libdbus-1-3 libdrm2 libgbm1 libglib2.0-0t64 \
+      libnspr4 libnss3 libpango-1.0-0 libx11-6 libxcb1 libxcomposite1 \
+      libxdamage1 libxext6 libxfixes3 libxkbcommon0 libxrandr2 xvfb \
+      libfontconfig1 libfreetype6 fonts-liberation fonts-noto-color-emoji \
+      fonts-unifont fonts-freefont-ttf fonts-ipafont-gothic fonts-wqy-zenhei \
+      fonts-tlwg-loma-otf xfonts-cyrillic xfonts-scalable \
+    && rm -rf /var/lib/apt/lists/*
+
 # Herdr, the terminal multiplexer that owns the agent panes. The binary comes
 # from the image for the same reason gh does above: /home/dev is a volume, so
 # a binary installed only there disappears when the volume is recreated, and
@@ -391,11 +414,14 @@ RUN printf '%s\n' \
       '[ -r /etc/devbox/tmux-commands.sh ] && . /etc/devbox/tmux-commands.sh' \
       '# Start the Herdr server on login. It owns the agent panes, so it must be' \
       '# running before an agent starts, and it dies with the container.' \
-      '# The socket is the readiness check, NOT the process name: pgrep -x herdr' \
-      '# also matches herdr remote-client-bridge, which is a client, not the' \
-      '# server, so that check silently skips the start. herdr server refuses' \
-      '# to start twice, so this is safe to run on every login.' \
-      '[ -S "$HOME/.config/herdr/herdr.sock" ] || { setsid nohup herdr server >/dev/null 2>&1 </dev/null & }' \
+      '# Ask the server, do not look for it. pgrep -x herdr also matches herdr' \
+      '# remote-client-bridge, a client. And the socket file is no proof either:' \
+      '# it lives on the home volume, and a container stop SIGKILLs the server' \
+      '# (it is not a child of PID 1), so every recreate leaves a stale socket' \
+      '# that would skip the start forever. herdr status exits 0 either way, so' \
+      '# read its answer. herdr server replaces a stale socket itself and' \
+      '# refuses to start twice, so this is safe to run on every login.' \
+      'herdr status 2>/dev/null | grep -q "status: running" || { setsid nohup herdr server >/dev/null 2>&1 </dev/null & }' \
       > /etc/profile.d/10-devbox.sh \
     && chmod 0644 /etc/profile.d/10-devbox.sh \
     && ln -sf /opt/venv/bin/python /usr/local/bin/python
