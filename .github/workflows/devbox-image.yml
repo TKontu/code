@@ -266,6 +266,77 @@ jobs:
             echo "tmux session commands OK"
           '
 
+      - name: Smoke test - herdr survives a fresh home volume
+        run: |
+          # The home volume is where the agents live, and it can be recreated
+          # empty. Everything the herdr setup needs must come from the image
+          # or be re-provisioned by the entrypoint, or the agents come back
+          # unable to see the multiplexer that owns their panes.
+          docker volume create herdr-ci-home >/dev/null
+          docker run --rm --entrypoint sh "$IMAGE:latest" -c '
+            set -eu
+            # The binary must be in the IMAGE, not in the home volume: a
+            # volume-only binary disappears when the volume is recreated.
+            test -x /usr/local/bin/herdr || { echo "herdr missing from the image"; exit 1; }
+            /usr/local/bin/herdr --version | grep -q "herdr " \
+              || { echo "herdr does not run"; exit 1; }
+            test -r /usr/share/devbox/herdr-skill/SKILL.md \
+              || { echo "herdr skill missing from the image"; exit 1; }
+            # The skill must match the binary: an agent told to call a CLI
+            # the installed herdr does not have fails in a way that reads as
+            # a broken skill rather than a version mismatch.
+            grep -q "^name: herdr" /usr/share/devbox/herdr-skill/SKILL.md \
+              || { echo "herdr skill has no name"; exit 1; }
+            # The autostart lives in the image, so a change to it always
+            # lands - unlike .bashrc, which the entrypoint only appends to
+            # when its marker is absent.
+            grep -q "herdr.sock" /etc/profile.d/10-devbox.sh \
+              || { echo "herdr autostart missing from /etc/profile.d"; exit 1; }
+            # And the chain must actually work: a login shell has to end up
+            # with a running server. Asserting on file contents proves the
+            # line was written; this proves it fires.
+            su dev -c "bash -lc \"sleep 3; herdr status 2>&1 | grep -q 'status: running'\"" \
+              || { echo "a login shell did not start the herdr server"; exit 1; }
+          '
+          # Then: an empty home volume, provisioned by the entrypoint, must
+          # end up with the skill linked into every agent and the Codex env
+          # block present and parseable.
+          docker run --rm --entrypoint sh \
+            --mount type=volume,source=herdr-ci-home,target=/home/dev \
+            "$IMAGE:latest" -c '
+            set -eu
+            sed "s|^exec /usr/sbin/sshd -D -e|echo provisioned|" /usr/local/bin/devbox-entrypoint > /tmp/ep.sh
+            sh /tmp/ep.sh >/dev/null 2>&1 || true
+            for d in .agents/skills .claude/skills .codex/skills .config/opencode/skills; do
+              test -r "/home/dev/$d/herdr/SKILL.md" \
+                || { echo "skill not linked into $d"; exit 1; }
+            done
+            # The dirs the agents write into must belong to dev. The
+            # entrypoint creates them as root, so without an explicit chown
+            # every agent that wants to write its own config fails with
+            # EACCES - which reads as a broken agent, not a permissions bug.
+            for d in .config .codex; do
+              owner=$(stat -c %u "/home/dev/$d")
+              test "$owner" = 1000 \
+                || { echo "/home/dev/$d is owned by uid $owner, not dev"; exit 1; }
+            done
+            # The image copy of herdr must win over any copy on the home
+            # volume. /home/dev/.local/bin comes first in PATH, so a volume
+            # copy left in place shadows the image one and the image upgrade
+            # silently does nothing.
+            if [ -e /home/dev/.local/bin/herdr ]; then
+              test -L /home/dev/.local/bin/herdr \
+                || { echo "volume herdr is not a symlink to the image copy"; exit 1; }
+              test "$(readlink /home/dev/.local/bin/herdr)" = "/usr/local/bin/herdr" \
+                || { echo "volume herdr points somewhere other than the image copy"; exit 1; }
+            fi
+            # A duplicate TOML table makes Codex reject the whole file and
+            # fall back to defaults, which looks exactly like this never
+            # working. Assert it parses and carries the env block.
+            python3 -c "import tomllib; d = tomllib.load(open(\"/home/dev/.codex/config.toml\", \"rb\")); s = d.get(\"shell_environment_policy\", {}).get(\"set\", {}); assert s.get(\"HERDR_ENV\") == \"1\", s; assert s.get(\"HERDR_SOCKET_PATH\"), s"
+          '
+          docker volume rm herdr-ci-home >/dev/null
+
       - name: Push
         run: |
           for t in $TAGS; do docker push "$IMAGE:$t"; done
