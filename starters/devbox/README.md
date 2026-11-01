@@ -53,15 +53,28 @@ replacing it, or a single-file bind mount keeps pointing at the old copy.
 Only the mounts. Everything else is the container's own layer, and replacing the container
 (a new image, or `compose up` after any change) throws it away — even though a plain restart does
 not, which is how hand-installed state quietly piles up over weeks. That includes anything you
-`apt install`ed or `pip install`ed into `/opt/venv`, your crontab (`/var/spool/cron`), all of
-`/tmp`, and every running process. Before a redeploy, check with:
+`apt install`ed or `pip install`ed into `/opt/venv`, all of `/tmp`, and every running process.
+Before a redeploy, check for runtime installs with:
 
 ```bash
-grep -h -E '^(Start-Date|Commandline)' /var/log/apt/history.log   # runtime apt installs
-crontab -l                                                          # schedules to save
+grep -h -E '^(Start-Date|Commandline)' /var/log/apt/history.log
 ```
 
 If you keep needing something, it belongs in the image.
+
+### Scheduled jobs
+
+cron runs on every start, but its own copy of your crontab (`/var/spool/cron`) is in the container
+layer. The copy that survives is `~/.config/devbox/crontab` on the home volume: the entrypoint loads
+it on every start. So edit that file, not `crontab -e`, and apply it straight away with:
+
+```bash
+crontab ~/.config/devbox/crontab
+```
+
+A `crontab -e` edit works until the next redeploy, then silently reverts to the file. If cron
+rejects the file, the container still starts; the reason is in the container log
+(`WARNING: crontab rejected ...`).
 
 ### Postgres, Redis and headless browsers
 

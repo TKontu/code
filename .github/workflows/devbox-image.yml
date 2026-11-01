@@ -394,6 +394,36 @@ jobs:
             echo "backing services and browser libraries OK"
           '
 
+      # The crontab lives in the container layer, so the entrypoint reloads
+      # it from the home volume on every start - or a redeploy silently drops
+      # every schedule. Run the REAL entrypoint to its end (only the final
+      # exec is swapped), with /work mounted and a key in place, so the
+      # FATAL checks pass exactly as on a box.
+      - name: Smoke test - cron runs and reloads the home-volume crontab
+        run: |
+          docker run --rm --entrypoint sh --mount type=tmpfs,destination=/work "$IMAGE:latest" -c '
+            set -eu
+            # No apostrophes anywhere in this body: it is inside the outer
+            # single-quoted sh -c string, and one would end it early.
+            mkdir -p /etc/ssh/authorized_keys.d /home/dev/.config/devbox
+            echo "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOnlyForCiOnlyForCiOnlyForCiOnlyForCi ci" > /etc/ssh/authorized_keys.d/dev
+            sed "s|^exec /usr/sbin/sshd -D -e|echo booted|" /usr/local/bin/devbox-entrypoint > /tmp/ep.sh
+
+            # A schedule cron rejects must be reported, never block the boot.
+            echo "not a crontab line" > /home/dev/.config/devbox/crontab
+            out=$(sh /tmp/ep.sh 2>&1)
+            echo "$out" | grep -qx booted || { echo "a bad crontab stopped the boot: $out"; exit 1; }
+            echo "$out" | grep -q "WARNING: crontab rejected" || { echo "a bad crontab was not reported"; exit 1; }
+            pkill -x cron || true
+
+            echo "*/5 * * * * echo devbox-cron-probe" > /home/dev/.config/devbox/crontab
+            sh /tmp/ep.sh | grep -qx booted || { echo "entrypoint did not reach the end"; exit 1; }
+            crontab -u dev -l | grep -q devbox-cron-probe \
+              || { echo "home-volume crontab was not loaded"; exit 1; }
+            pgrep -x cron >/dev/null || { echo "cron is not running"; exit 1; }
+            echo "cron OK"
+          '
+
       - name: Push
         run: |
           for t in $TAGS; do docker push "$IMAGE:$t"; done
