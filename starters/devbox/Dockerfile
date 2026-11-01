@@ -170,7 +170,11 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
 # The browser list is what Playwright's Chromium needs on noble (the t64
 # names are 24.04's); the browser binaries themselves stay per-project.
 # Its own layer, late in the file, so changing it does not re-download torch.
+#
+# cron rides in the same layer. It IS started, by the entrypoint, because a
+# schedule that only runs while someone remembers to start it is no schedule.
 RUN apt-get update && apt-get install -y --no-install-recommends \
+      cron \
       postgresql postgresql-contrib redis-server \
       libasound2t64 libatk-bridge2.0-0t64 libatk1.0-0t64 libatspi2.0-0t64 \
       libcairo2 libcups2t64 libdbus-1-3 libdrm2 libgbm1 libglib2.0-0t64 \
@@ -579,6 +583,17 @@ RUN printf '%s\n' \
       '  chown dev:dev "$cfg"' \
       'fi' \
       '' \
+      '# The crontab. cron keeps it in /var/spool/cron, which is the container' \
+      '# layer, so a redeploy silently drops every schedule. The copy that' \
+      '# counts lives on the home volume and is loaded on every start; edit' \
+      '# that file, then run crontab on it to apply - a crontab -e edit lasts' \
+      '# only until the next redeploy. A file cron rejects is reported, never' \
+      '# fatal: a typo in a schedule is no reason to refuse to boot.' \
+      'tab=/home/dev/.config/devbox/crontab' \
+      'if [ -f "$tab" ]; then' \
+      '  crontab -u dev "$tab" || echo "WARNING: crontab rejected $tab - no schedule loaded." >&2' \
+      'fi' \
+      '' \
       '# Start the Herdr server on the first interactive login. It owns the' \
       '# panes, so it must be running before any agent is started, and it' \
       '# dies with the container.' \
@@ -605,6 +620,10 @@ RUN printf '%s\n' \
       '  echo "       Check the volume mounted at /work, then start the container again." >&2' \
       '  exit 1' \
       'fi' \
+      '' \
+      '# After the checks, so a box that refuses to start runs nothing. cron' \
+      '# daemonizes itself; failing to start it costs the schedule, not the box.' \
+      '/usr/sbin/cron || echo "WARNING: cron did not start - schedules will not run." >&2' \
       '' \
       'exec /usr/sbin/sshd -D -e' \
       > /usr/local/bin/devbox-entrypoint \
