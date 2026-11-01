@@ -489,7 +489,14 @@ RUN printf '%s\n' \
       'fi' \
       'mkdir -p /home/dev/.cache/huggingface /home/dev/.cache/uv /home/dev/.cache/pycache /home/dev/.ssh' \
       'chmod 700 /home/dev/.ssh' \
-      'chown -R dev:dev /home/dev/.bashrc /home/dev/.cache /home/dev/.ssh' \
+      '# Fix ownership only where it is wrong. Never a blanket chown -R: a' \
+      '# chown dirties every inode it touches even when nothing changes, and' \
+      '# each of those inodes was last written from the previous container' \
+      '# cgroup, so the kernel switches its writeback owner one at a time.' \
+      '# On a home volume of ~20k cache files that pinned kernel workers at' \
+      '# 100% CPU for over ten minutes, with sshd not yet started - the box' \
+      '# refused SSH and went unhealthy. -h: never follow a link out of home.' \
+      'find /home/dev/.bashrc /home/dev/.cache /home/dev/.ssh \( ! -user dev -o ! -group dev \) -exec chown -h dev:dev {} +' \
       '' \
       '# The agent config dirs belong to dev too. mkdir ran as root above, so' \
       '# without this they come out root-owned and every agent that wants to' \
