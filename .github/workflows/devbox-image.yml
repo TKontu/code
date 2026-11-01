@@ -304,7 +304,7 @@ jobs:
             # The autostart lives in the image, so a change to it always
             # lands - unlike .bashrc, which the entrypoint only appends to
             # when its marker is absent.
-            grep -q "herdr.sock" /etc/profile.d/10-devbox.sh \
+            grep -q "herdr status" /etc/profile.d/10-devbox.sh \
               || { echo "herdr autostart missing from /etc/profile.d"; exit 1; }
             # And the chain must actually work: a login shell has to end up
             # with a running server. Asserting on file contents proves the
@@ -318,6 +318,16 @@ jobs:
             # any character, which matches the space.
             su dev -c "bash -lc \"sleep 3; herdr status 2>&1 | grep -q status:.running\"" \
               || { echo "a login shell did not start the herdr server"; exit 1; }
+            # Then what every recreate actually does: the server is SIGKILLed
+            # (it is not a child of PID 1, so it never sees the SIGTERM) and
+            # its socket stays behind on the home volume. The next login must
+            # still start it - a socket-file check would skip it forever.
+            pkill -9 -u dev -x herdr || { echo "no herdr server to kill"; exit 1; }
+            sleep 1
+            test -S /home/dev/.config/herdr/herdr.sock \
+              || { echo "no stale socket left behind - this test proves nothing"; exit 1; }
+            su dev -c "bash -lc \"sleep 3; herdr status 2>&1 | grep -q status:.running\"" \
+              || { echo "a stale socket stopped the login shell starting herdr"; exit 1; }
           '
           # Then: an empty home volume, provisioned by the entrypoint, must
           # end up with the skill linked into every agent and the Codex env
@@ -357,6 +367,32 @@ jobs:
             python3 -c "import tomllib; d = tomllib.load(open(\"/home/dev/.codex/config.toml\", \"rb\")); s = d.get(\"shell_environment_policy\", {}).get(\"set\", {}); assert s.get(\"HERDR_ENV\") == \"1\", s; assert s.get(\"HERDR_SOCKET_PATH\"), s"
           '
           docker volume rm herdr-ci-home >/dev/null
+
+      # Postgres and Redis ship installed but stopped, so they never hold a
+      # port against a project that brings its own. Assert both halves: idle
+      # by default, and they really answer once started - a package that
+      # installs but cannot start is found here, not mid-test on a box.
+      - name: Smoke test - backing services and browser libraries
+        run: |
+          docker run --rm --entrypoint sh "$IMAGE:latest" -c '
+            set -eu
+            pgrep -x postgres >/dev/null && { echo "postgres runs by default"; exit 1; }
+            pgrep -x redis-server >/dev/null && { echo "redis runs by default"; exit 1; }
+
+            service postgresql start >/dev/null
+            su postgres -c "psql -Atc \"select 1\"" | grep -qx 1 \
+              || { echo "postgres started but does not answer"; exit 1; }
+            service redis-server start >/dev/null
+            sleep 1
+            redis-cli ping | grep -qx PONG \
+              || { echo "redis started but does not answer"; exit 1; }
+
+            for lib in libnss3.so libgbm.so.1 libasound.so.2 libatk-bridge-2.0.so.0 libxkbcommon.so.0; do
+              ldconfig -p | grep -q "$lib" || { echo "browser library missing: $lib"; exit 1; }
+            done
+            command -v Xvfb >/dev/null || { echo "Xvfb missing"; exit 1; }
+            echo "backing services and browser libraries OK"
+          '
 
       - name: Push
         run: |

@@ -2,7 +2,8 @@
 
 A `Dockerfile` for a remote development container you work in over SSH, from a terminal or VS Code
 Remote-SSH. It ships Python (a venv at `/opt/venv` with torch, Jupyter, ruff, pytest), uv, Poetry,
-Node with Claude Code, the Docker CLI, and the GitHub CLI.
+Node with Claude Code, the Docker CLI, the GitHub CLI, herdr, and Postgres and Redis (installed but
+not started) along with the libraries a headless browser needs.
 
 Like the other starters, this is a convenience, not part of the kit's contracts. Keep the compose
 or stack file that deploys it in your own infrastructure repo — it will name hosts, ports and
@@ -46,6 +47,39 @@ user `dev`, and `dev` has passwordless sudo — so never mount the host's docker
 To add a machine later, append its public key to the mounted key file; sshd reads it on the next
 connection, no restart needed. Edit the file in place (`>>`, or `cat tmp > file`) rather than
 replacing it, or a single-file bind mount keeps pointing at the old copy.
+
+### What a redeploy keeps
+
+Only the mounts. Everything else is the container's own layer, and replacing the container
+(a new image, or `compose up` after any change) throws it away — even though a plain restart does
+not, which is how hand-installed state quietly piles up over weeks. That includes anything you
+`apt install`ed or `pip install`ed into `/opt/venv`, your crontab (`/var/spool/cron`), all of
+`/tmp`, and every running process. Before a redeploy, check with:
+
+```bash
+grep -h -E '^(Start-Date|Commandline)' /var/log/apt/history.log   # runtime apt installs
+crontab -l                                                          # schedules to save
+```
+
+If you keep needing something, it belongs in the image.
+
+### Postgres, Redis and headless browsers
+
+The image ships Postgres, Redis and the system libraries a headless Chromium needs (Playwright's
+list for Ubuntu 24.04, plus Xvfb), so integration tests can run against real services.
+
+They are **installed, not started** — nothing holds 5432 or 6379 unless you ask, so a project that
+brings its own via compose does not collide with them. Start them when you need them:
+
+```bash
+sudo service postgresql start
+sudo service redis-server start
+```
+
+Their data lives in the container layer and does not survive a redeploy. Treat them as scratch
+databases for tests; anything worth keeping belongs in a project's own service with a volume.
+Browser *binaries* stay per-project (`playwright install chromium`), so their version follows the
+project's lockfile rather than the image.
 
 ## Virtualenvs never live under `/work`
 
